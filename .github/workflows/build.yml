@@ -145,6 +145,16 @@ jobs:
                   findViewById<View>(R.id.btn_next).setOnClickListener { media(KeyEvent.KEYCODE_MEDIA_NEXT) }
               }
 
+              override fun onResume() {
+                  super.onResume()
+                  findViewById<CarView>(R.id.car_view).onResume()
+              }
+
+              override fun onPause() {
+                  findViewById<CarView>(R.id.car_view).onPause()
+                  super.onPause()
+              }
+
               // Clic = action par défaut ou appli choisie ; appui long = choisir l'appli
               private fun bindTile(id: Int, key: String, default: () -> Unit) {
                   val v = findViewById<View>(id)
@@ -243,6 +253,464 @@ jobs:
               }
           }
           ENDOFFILE
+          mkdir -p app/src/main/java/com/example/kialauncher
+          cat > app/src/main/java/com/example/kialauncher/CarMesh.kt <<'ENDOFFILE'
+          package com.example.kialauncher
+
+          import kotlin.math.PI
+          import kotlin.math.asin
+          import kotlin.math.cos
+          import kotlin.math.sin
+          import kotlin.math.sqrt
+
+          private fun p(x: Float, y: Float, z: Float) = floatArrayOf(x, y, z)
+
+          private fun cr(a: FloatArray, b: FloatArray, c: FloatArray): Float =
+              (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+          private fun inTri(q: FloatArray, a: FloatArray, b: FloatArray, c: FloatArray): Boolean =
+              cr(a, b, q) > 1e-6f && cr(b, c, q) > 1e-6f && cr(c, a, q) > 1e-6f
+
+          // Triangulation par "ear clipping" d'un polygone 2D (sens anti-horaire)
+          private fun triangulate(poly: List<FloatArray>): List<IntArray> {
+              val idx = poly.indices.toMutableList()
+              val out = ArrayList<IntArray>()
+              while (idx.size > 3) {
+                  var clipped = false
+                  for (i in idx.indices) {
+                      val a = idx[(i + idx.size - 1) % idx.size]
+                      val b = idx[i]
+                      val c = idx[(i + 1) % idx.size]
+                      if (cr(poly[a], poly[b], poly[c]) < -1e-7f) continue
+                      var inside = false
+                      for (j in idx) {
+                          if (j == a || j == b || j == c) continue
+                          if (inTri(poly[j], poly[a], poly[b], poly[c])) { inside = true; break }
+                      }
+                      if (inside) continue
+                      out.add(intArrayOf(a, b, c))
+                      idx.removeAt(i)
+                      clipped = true
+                      break
+                  }
+                  if (!clipped) {
+                      val n = idx.size
+                      out.add(intArrayOf(idx[n - 1], idx[0], idx[1]))
+                      idx.removeAt(0)
+                  }
+              }
+              out.add(intArrayOf(idx[0], idx[1], idx[2]))
+              return out
+          }
+
+          class MeshBuilder {
+              var data = FloatArray(1 shl 16)
+              var size = 0
+
+              private fun put(v: Float) {
+                  if (size == data.size) data = data.copyOf(size * 2)
+                  data[size++] = v
+              }
+
+              private fun vert(v: FloatArray, n: FloatArray, c: FloatArray) {
+                  put(v[0]); put(v[1]); put(v[2])
+                  put(n[0]); put(n[1]); put(n[2])
+                  put(c[0]); put(c[1]); put(c[2])
+              }
+
+              fun tri(a: FloatArray, b: FloatArray, c: FloatArray, n: FloatArray, col: FloatArray) {
+                  vert(a, n, col); vert(b, n, col); vert(c, n, col)
+              }
+
+              fun quad(a: FloatArray, b: FloatArray, c: FloatArray, d: FloatArray, n: FloatArray, col: FloatArray) {
+                  tri(a, b, c, n, col); tri(a, c, d, n, col)
+              }
+
+              fun box(x0: Float, y0: Float, z0: Float, x1: Float, y1: Float, z1: Float, col: FloatArray) {
+                  val a = p(x0, y0, z0); val b = p(x1, y0, z0); val c = p(x1, y1, z0); val d = p(x0, y1, z0)
+                  val e = p(x0, y0, z1); val f = p(x1, y0, z1); val g = p(x1, y1, z1); val h = p(x0, y1, z1)
+                  quad(e, f, g, h, p(0f, 0f, 1f), col)
+                  quad(b, a, d, c, p(0f, 0f, -1f), col)
+                  quad(f, b, c, g, p(1f, 0f, 0f), col)
+                  quad(a, e, h, d, p(-1f, 0f, 0f), col)
+                  quad(d, h, g, c, p(0f, 1f, 0f), col)
+                  quad(a, b, f, e, p(0f, -1f, 0f), col)
+              }
+
+              // Profil 2D (x, y) en sens anti-horaire, extrudé entre deux z
+              fun extrude(poly: List<FloatArray>, za: Float, zb: Float, col: FloatArray) {
+                  val z0 = minOf(za, zb)
+                  val z1 = maxOf(za, zb)
+                  for (t in triangulate(poly)) {
+                      val a = poly[t[0]]; val b = poly[t[1]]; val c = poly[t[2]]
+                      tri(p(a[0], a[1], z1), p(b[0], b[1], z1), p(c[0], c[1], z1), p(0f, 0f, 1f), col)
+                      tri(p(a[0], a[1], z0), p(b[0], b[1], z0), p(c[0], c[1], z0), p(0f, 0f, -1f), col)
+                  }
+                  for (i in poly.indices) {
+                      val a = poly[i]
+                      val b = poly[(i + 1) % poly.size]
+                      val dx = b[0] - a[0]
+                      val dy = b[1] - a[1]
+                      val len = sqrt(dx * dx + dy * dy)
+                      if (len < 1e-6f) continue
+                      val n = p(dy / len, -dx / len, 0f)
+                      quad(p(a[0], a[1], z0), p(b[0], b[1], z0), p(b[0], b[1], z1), p(a[0], a[1], z1), n, col)
+                  }
+              }
+
+              // Cylindre dont l'axe est parallèle à Z (roues)
+              fun cylZ(cx: Float, cy: Float, za: Float, zb: Float, r: Float, seg: Int, col: FloatArray) {
+                  val z0 = minOf(za, zb)
+                  val z1 = maxOf(za, zb)
+                  for (i in 0 until seg) {
+                      val a0 = (2.0 * PI * i / seg).toFloat()
+                      val a1 = (2.0 * PI * (i + 1) / seg).toFloat()
+                      val x0 = cx + r * cos(a0); val y0 = cy + r * sin(a0)
+                      val x1 = cx + r * cos(a1); val y1 = cy + r * sin(a1)
+                      val am = (a0 + a1) / 2f
+                      val n = p(cos(am), sin(am), 0f)
+                      quad(p(x0, y0, z0), p(x1, y1, z0), p(x1, y1, z1), p(x0, y0, z1), n, col)
+                      tri(p(cx, cy, z1), p(x0, y0, z1), p(x1, y1, z1), p(0f, 0f, 1f), col)
+                      tri(p(cx, cy, z0), p(x1, y1, z0), p(x0, y0, z0), p(0f, 0f, -1f), col)
+                  }
+              }
+
+              // Disque plat dont l'axe est vertical (plateau)
+              fun discY(r: Float, y0: Float, y1: Float, seg: Int, col: FloatArray) {
+                  for (i in 0 until seg) {
+                      val a0 = (2.0 * PI * i / seg).toFloat()
+                      val a1 = (2.0 * PI * (i + 1) / seg).toFloat()
+                      val x0 = r * cos(a0); val z0 = r * sin(a0)
+                      val x1 = r * cos(a1); val z1 = r * sin(a1)
+                      val am = (a0 + a1) / 2f
+                      val n = p(cos(am), 0f, sin(am))
+                      quad(p(x0, y0, z0), p(x1, y0, z1), p(x1, y1, z1), p(x0, y1, z0), n, col)
+                      tri(p(0f, y1, 0f), p(x1, y1, z1), p(x0, y1, z0), p(0f, 1f, 0f), col)
+                  }
+              }
+          }
+
+          // Citadine 5 portes type Kia Rio (2019), longueur 4,07 m, en low-poly
+          fun buildCar(body: FloatArray): MeshBuilder {
+              val m = MeshBuilder()
+              val glass = floatArrayOf(0.10f, 0.14f, 0.22f)
+              val dark = floatArrayOf(0.05f, 0.05f, 0.07f)
+              val tire = floatArrayOf(0.07f, 0.07f, 0.08f)
+              val rim = floatArrayOf(0.75f, 0.77f, 0.80f)
+              val lamp = floatArrayOf(0.97f, 0.97f, 0.85f)
+              val tail = floatArrayOf(0.85f, 0.08f, 0.08f)
+              val seam = floatArrayOf(0.12f, 0.12f, 0.14f)
+              val plate = floatArrayOf(0.90f, 0.90f, 0.90f)
+              val floorCol = floatArrayOf(0.13f, 0.17f, 0.40f)
+              val hw = 0.865f
+
+              // Plateau sous la voiture
+              m.discY(2.9f, -0.08f, -0.005f, 48, floorCol)
+
+              // Noyau sombre (passages de roues)
+              m.box(-1.95f, 0.26f, -0.55f, 1.95f, 0.70f, 0.55f, dark)
+
+              // Caisse basse avec passages de roues
+              val lower = ArrayList<FloatArray>()
+              val yb = 0.24f
+              fun arch(xc: Float) {
+                  val r = 0.40f
+                  val cy = 0.31f
+                  val a = asin(((yb - cy) / r).toDouble()).toFloat()
+                  val t0 = (PI - a).toFloat()
+                  val steps = 12
+                  for (k in 0..steps) {
+                      val t = t0 + (a - t0) * k / steps
+                      lower.add(floatArrayOf(xc + r * cos(t), cy + r * sin(t)))
+                  }
+              }
+              lower.add(floatArrayOf(-2.03f, yb))
+              arch(-1.36f)
+              arch(1.21f)
+              lower.add(floatArrayOf(2.03f, yb))
+              lower.add(floatArrayOf(2.03f, 0.74f))
+              lower.add(floatArrayOf(1.10f, 0.95f))
+              lower.add(floatArrayOf(-1.20f, 0.95f))
+              lower.add(floatArrayOf(-2.03f, 0.90f))
+              m.extrude(lower, -hw, hw, body)
+
+              // Habitacle vitré
+              val cabin = listOf(
+                  floatArrayOf(-1.75f, 0.90f), floatArrayOf(0.95f, 0.90f), floatArrayOf(0.95f, 0.95f),
+                  floatArrayOf(0.35f, 1.42f), floatArrayOf(-1.15f, 1.42f), floatArrayOf(-1.75f, 0.95f)
+              )
+              m.extrude(cabin, -0.72f, 0.72f, glass)
+
+              // Toit
+              m.box(-1.22f, 1.42f, -0.74f, 0.42f, 1.47f, 0.74f, body)
+
+              // Montants A, B, C
+              val pillarA = listOf(
+                  floatArrayOf(0.87f, 0.95f), floatArrayOf(0.95f, 0.95f),
+                  floatArrayOf(0.35f, 1.42f), floatArrayOf(0.27f, 1.42f)
+              )
+              val pillarB = listOf(
+                  floatArrayOf(-0.46f, 0.95f), floatArrayOf(-0.34f, 0.95f),
+                  floatArrayOf(-0.34f, 1.42f), floatArrayOf(-0.46f, 1.42f)
+              )
+              val pillarC = listOf(
+                  floatArrayOf(-1.75f, 0.95f), floatArrayOf(-1.65f, 0.95f),
+                  floatArrayOf(-1.05f, 1.42f), floatArrayOf(-1.15f, 1.42f)
+              )
+
+              for (s in intArrayOf(1, -1)) {
+                  m.extrude(pillarA, s * 0.70f, s * 0.74f, body)
+                  m.extrude(pillarB, s * 0.70f, s * 0.74f, body)
+                  m.extrude(pillarC, s * 0.70f, s * 0.74f, body)
+
+                  // Lignes de portes
+                  for (xl in floatArrayOf(0.55f, -0.40f, -1.20f)) {
+                      m.box(xl - 0.008f, 0.35f, s * hw, xl + 0.008f, 0.93f, s * (hw + 0.004f), seam)
+                  }
+
+                  // Rétroviseur
+                  m.box(0.50f, 0.97f, s * 0.86f, 0.75f, 1.08f, s * 0.98f, body)
+
+                  // Phare avant et feu arrière
+                  m.box(1.99f, 0.64f, s * 0.42f, 2.05f, 0.74f, s * 0.80f, lamp)
+                  m.box(-2.06f, 0.66f, s * 0.45f, -2.01f, 0.84f, s * 0.82f, tail)
+
+                  // Roues
+                  for (xc in floatArrayOf(-1.36f, 1.21f)) {
+                      val zc = s * 0.745f
+                      m.cylZ(xc, 0.31f, zc - 0.11f, zc + 0.11f, 0.31f, 22, tire)
+                      m.cylZ(xc, 0.31f, zc + s * 0.10f, zc + s * 0.116f, 0.19f, 18, rim)
+                      m.cylZ(xc, 0.31f, zc + s * 0.11f, zc + s * 0.122f, 0.06f, 12, dark)
+                  }
+              }
+
+              // Calandre, prise d'air basse et plaques
+              m.box(1.99f, 0.40f, -0.38f, 2.05f, 0.58f, 0.38f, dark)
+              m.box(1.99f, 0.28f, -0.55f, 2.05f, 0.36f, 0.55f, dark)
+              m.box(2.03f, 0.30f, -0.26f, 2.06f, 0.37f, 0.26f, plate)
+              m.box(-2.06f, 0.45f, -0.26f, -2.02f, 0.57f, 0.26f, plate)
+
+              return m
+          }
+          ENDOFFILE
+          mkdir -p app/src/main/java/com/example/kialauncher
+          cat > app/src/main/java/com/example/kialauncher/CarView.kt <<'ENDOFFILE'
+          package com.example.kialauncher
+
+          import android.content.Context
+          import android.graphics.PixelFormat
+          import android.opengl.GLES20
+          import android.opengl.GLSurfaceView
+          import android.opengl.Matrix
+          import android.os.SystemClock
+          import android.util.AttributeSet
+          import android.util.Log
+          import android.view.MotionEvent
+          import java.nio.ByteBuffer
+          import java.nio.ByteOrder
+          import java.nio.FloatBuffer
+          import javax.microedition.khronos.egl.EGLConfig
+          import javax.microedition.khronos.opengles.GL10
+          import kotlin.math.abs
+          import kotlin.math.cos
+          import kotlin.math.max
+          import kotlin.math.sin
+          import kotlin.math.tan
+
+          // Couleurs de carrosserie : un appui sur la voiture passe à la suivante
+          val PALETTE = arrayOf(
+              floatArrayOf(0.93f, 0.94f, 0.96f),
+              floatArrayOf(0.55f, 0.58f, 0.62f),
+              floatArrayOf(0.80f, 0.10f, 0.12f),
+              floatArrayOf(0.12f, 0.35f, 0.80f),
+              floatArrayOf(0.08f, 0.08f, 0.10f),
+              floatArrayOf(0.75f, 0.85f, 0.15f)
+          )
+
+          private const val VS = """
+          uniform mat4 uMvp;
+          attribute vec3 aPos;
+          attribute vec3 aNormal;
+          attribute vec3 aColor;
+          varying vec3 vNormal;
+          varying vec3 vColor;
+          void main() {
+              vNormal = aNormal;
+              vColor = aColor;
+              gl_Position = uMvp * vec4(aPos, 1.0);
+          }
+          """
+
+          private const val FS = """
+          precision mediump float;
+          uniform vec3 uLight;
+          varying vec3 vNormal;
+          varying vec3 vColor;
+          void main() {
+              float d = max(dot(normalize(vNormal), uLight), 0.0);
+              float l = 0.38 + 0.75 * d;
+              gl_FragColor = vec4(vColor * l, 1.0);
+          }
+          """
+
+          class CarRenderer : GLSurfaceView.Renderer {
+              @Volatile var touching = false
+              @Volatile var colorIndex = 0
+              @Volatile var dragDelta = 0f
+
+              private var builtColor = -1
+              private var angle = 25f
+              private var last = 0L
+              private var program = 0
+              private var aPos = 0
+              private var aNormal = 0
+              private var aColor = 0
+              private var uMvp = 0
+              private var uLight = 0
+              private var buffer: FloatBuffer? = null
+              private var count = 0
+              private val proj = FloatArray(16)
+              private val view = FloatArray(16)
+              private val model = FloatArray(16)
+              private val vp = FloatArray(16)
+              private val mvp = FloatArray(16)
+
+              private fun compile(type: Int, src: String): Int {
+                  val s = GLES20.glCreateShader(type)
+                  GLES20.glShaderSource(s, src)
+                  GLES20.glCompileShader(s)
+                  val ok = IntArray(1)
+                  GLES20.glGetShaderiv(s, GLES20.GL_COMPILE_STATUS, ok, 0)
+                  if (ok[0] == 0) Log.e("CarView", GLES20.glGetShaderInfoLog(s))
+                  return s
+              }
+
+              override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+                  GLES20.glClearColor(0f, 0f, 0f, 0f)
+                  GLES20.glEnable(GLES20.GL_DEPTH_TEST)
+                  program = GLES20.glCreateProgram()
+                  GLES20.glAttachShader(program, compile(GLES20.GL_VERTEX_SHADER, VS))
+                  GLES20.glAttachShader(program, compile(GLES20.GL_FRAGMENT_SHADER, FS))
+                  GLES20.glLinkProgram(program)
+                  aPos = GLES20.glGetAttribLocation(program, "aPos")
+                  aNormal = GLES20.glGetAttribLocation(program, "aNormal")
+                  aColor = GLES20.glGetAttribLocation(program, "aColor")
+                  uMvp = GLES20.glGetUniformLocation(program, "uMvp")
+                  uLight = GLES20.glGetUniformLocation(program, "uLight")
+                  builtColor = -1
+                  last = SystemClock.uptimeMillis()
+              }
+
+              override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) {
+                  GLES20.glViewport(0, 0, w, h)
+                  val aspect = w.toFloat() / max(h, 1).toFloat()
+                  val fov = 32f
+                  Matrix.perspectiveM(proj, 0, fov, aspect, 0.5f, 60f)
+                  val halfH = tan(Math.toRadians((fov / 2f).toDouble())).toFloat()
+                  val dist = max(7f, 2.9f / (halfH * aspect))
+                  Matrix.setLookAtM(view, 0, 0f, dist * 0.30f, dist, 0f, 0.1f, 0f, 0f, 1f, 0f)
+              }
+
+              private fun rebuild() {
+                  val idx = colorIndex
+                  val mb = buildCar(PALETTE[idx % PALETTE.size])
+                  val fb = ByteBuffer.allocateDirect(mb.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+                  fb.put(mb.data, 0, mb.size)
+                  fb.position(0)
+                  buffer = fb
+                  count = mb.size / 9
+                  builtColor = idx
+              }
+
+              override fun onDrawFrame(gl: GL10?) {
+                  val now = SystemClock.uptimeMillis()
+                  val dt = ((now - last) / 1000f).coerceAtMost(0.1f)
+                  last = now
+                  angle += dragDelta
+                  dragDelta = 0f
+                  if (!touching) angle += 22f * dt
+                  angle %= 360f
+                  if (builtColor != colorIndex) rebuild()
+
+                  GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
+                  val buf = buffer ?: return
+
+                  Matrix.setIdentityM(model, 0)
+                  Matrix.translateM(model, 0, 0f, -0.6f, 0f)
+                  Matrix.rotateM(model, 0, angle, 0f, 1f, 0f)
+                  Matrix.multiplyMM(vp, 0, proj, 0, view, 0)
+                  Matrix.multiplyMM(mvp, 0, vp, 0, model, 0)
+
+                  // Lumière fixe dans le monde, exprimée dans le repère de la voiture
+                  val rad = Math.toRadians(angle.toDouble())
+                  val c = cos(rad).toFloat()
+                  val s = sin(rad).toFloat()
+                  val lx = 0.40f
+                  val ly = 0.80f
+                  val lz = 0.45f
+
+                  GLES20.glUseProgram(program)
+                  GLES20.glUniformMatrix4fv(uMvp, 1, false, mvp, 0)
+                  GLES20.glUniform3f(uLight, lx * c - lz * s, ly, lx * s + lz * c)
+
+                  buf.position(0)
+                  GLES20.glVertexAttribPointer(aPos, 3, GLES20.GL_FLOAT, false, 36, buf)
+                  GLES20.glEnableVertexAttribArray(aPos)
+                  buf.position(3)
+                  GLES20.glVertexAttribPointer(aNormal, 3, GLES20.GL_FLOAT, false, 36, buf)
+                  GLES20.glEnableVertexAttribArray(aNormal)
+                  buf.position(6)
+                  GLES20.glVertexAttribPointer(aColor, 3, GLES20.GL_FLOAT, false, 36, buf)
+                  GLES20.glEnableVertexAttribArray(aColor)
+
+                  GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, count)
+              }
+          }
+
+          class CarView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
+              GLSurfaceView(context, attrs) {
+
+              private val renderer = CarRenderer()
+              private var downX = 0f
+              private var lastX = 0f
+              private var downT = 0L
+              private var moved = false
+
+              init {
+                  setEGLContextClientVersion(2)
+                  setEGLConfigChooser(8, 8, 8, 8, 16, 0)
+                  holder.setFormat(PixelFormat.TRANSLUCENT)
+                  setZOrderOnTop(true)
+                  setRenderer(renderer)
+              }
+
+              // Glisser = faire tourner ; toucher = changer la couleur
+              override fun onTouchEvent(e: MotionEvent): Boolean {
+                  when (e.actionMasked) {
+                      MotionEvent.ACTION_DOWN -> {
+                          downX = e.x
+                          lastX = e.x
+                          downT = e.eventTime
+                          moved = false
+                          renderer.touching = true
+                      }
+                      MotionEvent.ACTION_MOVE -> {
+                          if (abs(e.x - downX) > 24f) moved = true
+                          renderer.dragDelta += (e.x - lastX) * 0.5f
+                          lastX = e.x
+                      }
+                      MotionEvent.ACTION_UP -> {
+                          renderer.touching = false
+                          if (!moved && e.eventTime - downT < 400) {
+                              renderer.colorIndex = (renderer.colorIndex + 1) % PALETTE.size
+                          }
+                      }
+                      MotionEvent.ACTION_CANCEL -> renderer.touching = false
+                  }
+                  return true
+              }
+          }
+          ENDOFFILE
           mkdir -p app/src/main/res/values
           cat > app/src/main/res/values/strings.xml <<'ENDOFFILE'
           <resources>
@@ -283,13 +751,13 @@ jobs:
                   android:gravity="center_horizontal" android:padding="24dp"
                   android:background="@drawable/card">
                   <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                      android:text="Kia Rio" android:textColor="#FFFFFF" android:textSize="28sp"
+                      android:text="Kia Rio 2019" android:textColor="#FFFFFF" android:textSize="28sp"
                       android:textStyle="bold" />
                   <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                       android:text="● Tout est fermé" android:textColor="#4ADE80" android:textSize="16sp" />
-                  <ImageView android:layout_width="match_parent" android:layout_height="0dp"
-                      android:layout_weight="1" android:src="@drawable/car"
-                      android:scaleType="fitCenter" android:contentDescription="Voiture" />
+                  <com.example.kialauncher.CarView android:id="@+id/car_view"
+                      android:layout_width="match_parent" android:layout_height="0dp"
+                      android:layout_weight="1" />
               </LinearLayout>
 
               <LinearLayout
@@ -341,21 +809,6 @@ jobs:
               <corners android:radius="28dp" />
           </shape>
           ENDOFFILE
-          mkdir -p app/src/main/res/drawable
-          cat > app/src/main/res/drawable/car.xml <<'ENDOFFILE'
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="300dp" android:height="120dp"
-              android:viewportWidth="300" android:viewportHeight="120">
-              <path android:fillColor="#B9C4D8"
-                  android:pathData="M15,88 L25,68 Q36,52 70,48 L108,32 Q150,22 200,30 L240,50 Q276,55 286,76 L292,92 L15,92 Z" />
-              <path android:fillColor="#2B3550"
-                  android:pathData="M82,48 L112,36 L146,32 L146,50 Z M154,32 L198,34 L228,50 L154,50 Z" />
-              <path android:fillColor="#111111"
-                  android:pathData="M80,92 m-22,0 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0 M226,92 m-22,0 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0" />
-              <path android:fillColor="#8A93A6"
-                  android:pathData="M80,92 m-11,0 a11,11 0 1,0 22,0 a11,11 0 1,0 -22,0 M226,92 m-11,0 a11,11 0 1,0 22,0 a11,11 0 1,0 -22,0" />
-          </vector>
-          ENDOFFILE
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -367,5 +820,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
-          name: Kia Launcher v${{ github.run_number }}
+          name: Kia Launcher 3D v${{ github.run_number }}
           files: app/build/outputs/apk/debug/app-debug.apk
