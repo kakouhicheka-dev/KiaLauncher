@@ -1,0 +1,371 @@
+name: Build APK
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate project files
+        run: |
+          cat > settings.gradle.kts <<'ENDOFFILE'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "KiaLauncher"
+          include(":app")
+          ENDOFFILE
+          cat > build.gradle.kts <<'ENDOFFILE'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          ENDOFFILE
+          cat > gradle.properties <<'ENDOFFILE'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2g
+          ENDOFFILE
+          mkdir -p app
+          cat > app/build.gradle.kts <<'ENDOFFILE'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.example.kialauncher"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.example.kialauncher"
+                  minSdk = 26
+                  targetSdk = 33
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_1_8
+                  targetCompatibility = JavaVersion.VERSION_1_8
+              }
+              kotlinOptions { jvmTarget = "1.8" }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.13.1")
+          }
+          ENDOFFILE
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'ENDOFFILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <queries>
+                  <intent>
+                      <action android:name="android.intent.action.MAIN" />
+                      <category android:name="android.intent.category.LAUNCHER" />
+                  </intent>
+              </queries>
+              <application
+                  android:label="@string/app_name"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTask"
+                      android:screenOrientation="landscape"
+                      android:stateNotNeeded="true"
+                      android:configChanges="orientation|screenSize|keyboardHidden">
+                      <!-- Lanceur normal : permet de tester sans le définir par défaut -->
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                      <!-- Écran d'accueil : permet de le choisir comme launcher par défaut -->
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.HOME" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                      </intent-filter>
+                  </activity>
+                  <activity
+                      android:name=".AppsActivity"
+                      android:exported="false"
+                      android:screenOrientation="landscape" />
+              </application>
+          </manifest>
+          ENDOFFILE
+          mkdir -p app/src/main/java/com/example/kialauncher
+          cat > app/src/main/java/com/example/kialauncher/MainActivity.kt <<'ENDOFFILE'
+          package com.example.kialauncher
+
+          import android.app.Activity
+          import android.app.AlertDialog
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.ResolveInfo
+          import android.media.AudioManager
+          import android.net.Uri
+          import android.os.Bundle
+          import android.view.KeyEvent
+          import android.view.View
+          import android.widget.Toast
+
+          fun Context.launchableApps(): List<ResolveInfo> {
+              val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+              return packageManager.queryIntentActivities(i, 0)
+                  .filter { it.activityInfo.packageName != packageName }
+                  .sortedBy { it.loadLabel(packageManager).toString().lowercase() }
+          }
+
+          fun Context.launchPackage(pkg: String) {
+              val i = packageManager.getLaunchIntentForPackage(pkg)
+              if (i != null) startActivity(i)
+              else Toast.makeText(this, "Application introuvable", Toast.LENGTH_SHORT).show()
+          }
+
+          class MainActivity : Activity() {
+              private val prefs by lazy { getSharedPreferences("tiles", MODE_PRIVATE) }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+
+                  bindTile(R.id.tile_nav, "nav") { open(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q="))) }
+                  bindTile(R.id.tile_music, "music") { openMusic() }
+                  bindTile(R.id.card_music, "music") { openMusic() }
+                  bindTile(R.id.tile_phone, "phone") { open(Intent(Intent.ACTION_DIAL)) }
+                  bindTile(R.id.tile_radio, "radio") { toast("Appui long pour choisir l'application Radio") }
+
+                  findViewById<View>(R.id.tile_apps).setOnClickListener {
+                      startActivity(Intent(this, AppsActivity::class.java))
+                  }
+                  findViewById<View>(R.id.btn_prev).setOnClickListener { media(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
+                  findViewById<View>(R.id.btn_play).setOnClickListener { media(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) }
+                  findViewById<View>(R.id.btn_next).setOnClickListener { media(KeyEvent.KEYCODE_MEDIA_NEXT) }
+              }
+
+              // Clic = action par défaut ou appli choisie ; appui long = choisir l'appli
+              private fun bindTile(id: Int, key: String, default: () -> Unit) {
+                  val v = findViewById<View>(id)
+                  v.setOnClickListener {
+                      val pkg = prefs.getString(key, null)
+                      if (pkg != null) launchPackage(pkg) else default()
+                  }
+                  v.setOnLongClickListener { pickApp(key); true }
+              }
+
+              private fun pickApp(key: String) {
+                  val apps = launchableApps()
+                  val labels = apps.map { it.loadLabel(packageManager).toString() }.toTypedArray()
+                  AlertDialog.Builder(this)
+                      .setTitle("Choisir l'application")
+                      .setItems(labels) { _, which ->
+                          prefs.edit().putString(key, apps[which].activityInfo.packageName).apply()
+                      }.show()
+              }
+
+              private fun openMusic() =
+                  open(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_MUSIC))
+
+              private fun open(intent: Intent) {
+                  try { startActivity(intent) } catch (e: Exception) { toast("Aucune application disponible") }
+              }
+
+              private fun media(code: Int) {
+                  val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                  am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+                  am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+              }
+
+              private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+
+              // Un launcher ne doit pas se fermer avec « Retour »
+              @Deprecated("Deprecated in Java")
+              override fun onBackPressed() {}
+          }
+          ENDOFFILE
+          mkdir -p app/src/main/java/com/example/kialauncher
+          cat > app/src/main/java/com/example/kialauncher/AppsActivity.kt <<'ENDOFFILE'
+          package com.example.kialauncher
+
+          import android.app.Activity
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.widget.BaseAdapter
+          import android.widget.GridView
+          import android.widget.ImageView
+          import android.widget.LinearLayout
+          import android.widget.TextView
+
+          class AppsActivity : Activity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val apps = launchableApps()
+                  val d = resources.displayMetrics.density
+
+                  val grid = GridView(this).apply {
+                      numColumns = 8
+                      setPadding((24 * d).toInt(), (24 * d).toInt(), (24 * d).toInt(), (24 * d).toInt())
+                      verticalSpacing = (20 * d).toInt()
+                      setBackgroundResource(R.drawable.bg_main)
+                      adapter = object : BaseAdapter() {
+                          override fun getCount() = apps.size
+                          override fun getItem(p: Int) = apps[p]
+                          override fun getItemId(p: Int) = p.toLong()
+                          override fun getView(p: Int, v: View?, parent: ViewGroup): View {
+                              val a = apps[p]
+                              val icon = ImageView(context).apply {
+                                  setImageDrawable(a.loadIcon(packageManager))
+                                  layoutParams = LinearLayout.LayoutParams((56 * d).toInt(), (56 * d).toInt())
+                              }
+                              val label = TextView(context).apply {
+                                  text = a.loadLabel(packageManager)
+                                  setTextColor(Color.WHITE)
+                                  textSize = 14f
+                                  maxLines = 1
+                                  gravity = Gravity.CENTER
+                              }
+                              return LinearLayout(context).apply {
+                                  orientation = LinearLayout.VERTICAL
+                                  gravity = Gravity.CENTER
+                                  addView(icon)
+                                  addView(label)
+                              }
+                          }
+                      }
+                      setOnItemClickListener { _, _, pos, _ -> launchPackage(apps[pos].activityInfo.packageName) }
+                  }
+                  setContentView(grid)
+              }
+          }
+          ENDOFFILE
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/strings.xml <<'ENDOFFILE'
+          <resources>
+              <string name="app_name">Kia Launcher</string>
+          </resources>
+          ENDOFFILE
+          mkdir -p app/src/main/res/layout
+          cat > app/src/main/res/layout/activity_main.xml <<'ENDOFFILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent" android:layout_height="match_parent"
+              android:orientation="horizontal" android:background="@drawable/bg_main"
+              android:padding="16dp">
+
+              <LinearLayout
+                  android:layout_width="84dp" android:layout_height="match_parent"
+                  android:orientation="vertical" android:gravity="center">
+                  <TextView android:id="@+id/tile_nav" android:layout_width="68dp" android:layout_height="68dp"
+                      android:layout_margin="8dp" android:gravity="center" android:text="🧭"
+                      android:textSize="30sp" android:background="@drawable/card" />
+                  <TextView android:id="@+id/tile_music" android:layout_width="68dp" android:layout_height="68dp"
+                      android:layout_margin="8dp" android:gravity="center" android:text="🎵"
+                      android:textSize="30sp" android:background="@drawable/card" />
+                  <TextView android:id="@+id/tile_phone" android:layout_width="68dp" android:layout_height="68dp"
+                      android:layout_margin="8dp" android:gravity="center" android:text="📞"
+                      android:textSize="30sp" android:background="@drawable/card" />
+                  <TextView android:id="@+id/tile_radio" android:layout_width="68dp" android:layout_height="68dp"
+                      android:layout_margin="8dp" android:gravity="center" android:text="📻"
+                      android:textSize="30sp" android:background="@drawable/card" />
+                  <TextView android:id="@+id/tile_apps" android:layout_width="68dp" android:layout_height="68dp"
+                      android:layout_margin="8dp" android:gravity="center" android:text="▦"
+                      android:textSize="30sp" android:textColor="#FFFFFF" android:background="@drawable/card" />
+              </LinearLayout>
+
+              <LinearLayout
+                  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="2"
+                  android:layout_margin="8dp" android:orientation="vertical"
+                  android:gravity="center_horizontal" android:padding="24dp"
+                  android:background="@drawable/card">
+                  <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                      android:text="Kia Rio" android:textColor="#FFFFFF" android:textSize="28sp"
+                      android:textStyle="bold" />
+                  <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                      android:text="● Tout est fermé" android:textColor="#4ADE80" android:textSize="16sp" />
+                  <ImageView android:layout_width="match_parent" android:layout_height="0dp"
+                      android:layout_weight="1" android:src="@drawable/car"
+                      android:scaleType="fitCenter" android:contentDescription="Voiture" />
+              </LinearLayout>
+
+              <LinearLayout
+                  android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+                  android:orientation="vertical">
+
+                  <LinearLayout android:id="@+id/card_music"
+                      android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+                      android:layout_margin="8dp" android:orientation="vertical" android:gravity="center"
+                      android:padding="16dp" android:background="@drawable/card">
+                      <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                          android:text="🎵 Musique" android:textColor="#FFFFFF" android:textSize="22sp" />
+                      <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+                          android:orientation="horizontal" android:layout_marginTop="12dp">
+                          <TextView android:id="@+id/btn_prev" android:layout_width="64dp" android:layout_height="64dp"
+                              android:gravity="center" android:text="⏮" android:textSize="28sp" android:textColor="#FFFFFF" />
+                          <TextView android:id="@+id/btn_play" android:layout_width="64dp" android:layout_height="64dp"
+                              android:gravity="center" android:text="⏯" android:textSize="28sp" android:textColor="#FFFFFF" />
+                          <TextView android:id="@+id/btn_next" android:layout_width="64dp" android:layout_height="64dp"
+                              android:gravity="center" android:text="⏭" android:textSize="28sp" android:textColor="#FFFFFF" />
+                      </LinearLayout>
+                  </LinearLayout>
+
+                  <LinearLayout
+                      android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+                      android:layout_margin="8dp" android:orientation="vertical" android:gravity="center"
+                      android:background="@drawable/card">
+                      <TextClock android:layout_width="wrap_content" android:layout_height="wrap_content"
+                          android:format24Hour="HH:mm" android:format12Hour="HH:mm"
+                          android:textColor="#FFFFFF" android:textSize="56sp" android:textStyle="bold" />
+                      <TextClock android:layout_width="wrap_content" android:layout_height="wrap_content"
+                          android:format24Hour="EEEE d MMMM" android:format12Hour="EEEE d MMMM"
+                          android:textColor="#C7D2FE" android:textSize="18sp" />
+                  </LinearLayout>
+              </LinearLayout>
+          </LinearLayout>
+          ENDOFFILE
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/bg_main.xml <<'ENDOFFILE'
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <gradient android:startColor="#0A0F2E" android:endColor="#1E2F7A" android:angle="315" />
+          </shape>
+          ENDOFFILE
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/card.xml <<'ENDOFFILE'
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <solid android:color="#26FFFFFF" />
+              <stroke android:width="1dp" android:color="#33FFFFFF" />
+              <corners android:radius="28dp" />
+          </shape>
+          ENDOFFILE
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/car.xml <<'ENDOFFILE'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="300dp" android:height="120dp"
+              android:viewportWidth="300" android:viewportHeight="120">
+              <path android:fillColor="#B9C4D8"
+                  android:pathData="M15,88 L25,68 Q36,52 70,48 L108,32 Q150,22 200,30 L240,50 Q276,55 286,76 L292,92 L15,92 Z" />
+              <path android:fillColor="#2B3550"
+                  android:pathData="M82,48 L112,36 L146,32 L146,50 Z M154,32 L198,34 L228,50 L154,50 Z" />
+              <path android:fillColor="#111111"
+                  android:pathData="M80,92 m-22,0 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0 M226,92 m-22,0 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0" />
+              <path android:fillColor="#8A93A6"
+                  android:pathData="M80,92 m-11,0 a11,11 0 1,0 22,0 a11,11 0 1,0 -22,0 M226,92 m-11,0 a11,11 0 1,0 22,0 a11,11 0 1,0 -22,0" />
+          </vector>
+          ENDOFFILE
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.7
+      - run: gradle assembleDebug
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Kia Launcher v${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
