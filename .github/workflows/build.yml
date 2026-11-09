@@ -817,6 +817,8 @@ jobs:
           pip install numpy fast-simplification
           python convert_car.py
           cp CarView.kt app/src/main/java/com/example/kialauncher/CarView.kt 
+      - name: Apply design
+        run: bash apply_design.sh
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
