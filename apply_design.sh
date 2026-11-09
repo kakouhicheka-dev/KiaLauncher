@@ -102,11 +102,10 @@ import android.view.KeyEvent
 import android.view.View
 import android.widget.Toast
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
 import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
 import java.io.File
@@ -135,7 +134,7 @@ class MainActivity : Activity() {
         // Configuration de la carte (cache dans le dossier de l'appli : pas de permission stockage)
         val cfg = Configuration.getInstance()
         cfg.load(this, getSharedPreferences("osmdroid", MODE_PRIVATE))
-        cfg.setUserAgentValue(packageName)
+        cfg.setUserAgentValue("KiaLauncher/1.0 (autoradio Kia Rio; github.com/kakouhicheka-dev/KiaLauncher)")
         cfg.setOsmdroidBasePath(File(cacheDir, "osmdroid"))
         cfg.setOsmdroidTileCache(File(cacheDir, "osmdroid/tiles"))
 
@@ -162,12 +161,20 @@ class MainActivity : Activity() {
     private fun setupMap() {
         val m = findViewById<MapView>(R.id.map)
         map = m
-        m.setTileSource(TileSourceFactory.MAPNIK)
+        // Fond de carte sombre (CARTO / OpenStreetMap), sans clé d'API
+        m.setTileSource(
+            XYTileSource(
+                "CartoDark", 0, 19, 256, ".png",
+                arrayOf(
+                    "https://a.basemaps.cartocdn.com/dark_all/",
+                    "https://b.basemaps.cartocdn.com/dark_all/",
+                    "https://c.basemaps.cartocdn.com/dark_all/"
+                )
+            )
+        )
         m.setMultiTouchControls(false)
         m.zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
         m.setTilesScaledToDpi(true)
-        // Carte en mode sombre
-        m.overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERT_COLORS)
         m.controller.setZoom(17.0)
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             startLocation()
@@ -666,7 +673,7 @@ cat > $SRC/res/layout/activity_main.xml <<'ENDOFFILE'
 
         <!-- Colonne d'icônes -->
         <LinearLayout
-            android:layout_width="76dp"
+            android:layout_width="68dp"
             android:layout_height="match_parent"
             android:orientation="vertical">
 
@@ -776,7 +783,7 @@ cat > $SRC/res/layout/activity_main.xml <<'ENDOFFILE'
                 android:id="@+id/card_gps"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                android:layout_weight="1.35"
+                android:layout_weight="1.15"
                 android:layout_margin="6dp"
                 android:background="@drawable/card"
                 android:clipToOutline="true">
@@ -804,13 +811,22 @@ cat > $SRC/res/layout/activity_main.xml <<'ENDOFFILE'
                     android:textColor="#FFFFFF"
                     android:textSize="13sp"
                     android:background="@drawable/chip" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="bottom|end"
+                    android:layout_margin="6dp"
+                    android:text="© OpenStreetMap © CARTO"
+                    android:textColor="#99FFFFFF"
+                    android:textSize="9sp" />
             </FrameLayout>
 
             <LinearLayout
                 android:id="@+id/card_music"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                android:layout_weight="0.9"
+                android:layout_weight="1.1"
                 android:layout_margin="6dp"
                 android:orientation="vertical"
                 android:gravity="center"
@@ -847,28 +863,28 @@ cat > $SRC/res/layout/activity_main.xml <<'ENDOFFILE'
 
                     <ImageView
                         android:id="@+id/btn_prev"
-                        android:layout_width="52dp"
-                        android:layout_height="52dp"
-                        android:padding="12dp"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:padding="10dp"
                         android:src="@drawable/ic_prev"
                         android:contentDescription="Précédent" />
 
                     <ImageView
                         android:id="@+id/btn_play"
-                        android:layout_width="56dp"
-                        android:layout_height="56dp"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
                         android:layout_marginLeft="6dp"
                         android:layout_marginRight="6dp"
-                        android:padding="14dp"
+                        android:padding="11dp"
                         android:src="@drawable/ic_play"
                         android:background="@drawable/btn_round"
                         android:contentDescription="Lecture / pause" />
 
                     <ImageView
                         android:id="@+id/btn_next"
-                        android:layout_width="52dp"
-                        android:layout_height="52dp"
-                        android:padding="12dp"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:padding="10dp"
                         android:src="@drawable/ic_next"
                         android:contentDescription="Suivant" />
                 </LinearLayout>
