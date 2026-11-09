@@ -809,7 +809,14 @@ jobs:
               <corners android:radius="28dp" />
           </shape>
           ENDOFFILE
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Convert 3D model
+        run: |
+          pip install numpy fast-simplification
+          python convert_car.py
+          cp CarView.kt app/src/main/java/com/example/kialauncher/CarView.kt - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
