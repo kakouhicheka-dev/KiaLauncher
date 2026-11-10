@@ -859,6 +859,34 @@ jobs:
           s = re.sub(r'<TextView[^>]*?/>', lambda x: fix(x.group(0)), s, flags=re.S)
           open(p, 'w', encoding='utf-8').write(s)
           PYEOF
+          python3 - <<'PYEOF2'
+          p = 'app/src/main/java/com/example/kialauncher/CarView.kt'
+          s = open(p, encoding='utf-8').read()
+          a = s.index('private const val FS = """')
+          b = s.index('"""', a + 30) + 3
+          fs = '''private const val FS = """
+          precision mediump float;
+          uniform vec3 uLight;
+          varying vec3 vNormal;
+          varying vec3 vColor;
+          void main() {
+              vec3 n = normalize(vNormal);
+              float d = max(dot(n, uLight), 0.0);
+              float fill = max(dot(n, vec3(-uLight.x, 0.3, -uLight.z)), 0.0);
+              float sky = n.y * 0.5 + 0.5;
+              float top = pow(max(n.y, 0.0), 3.0);
+              vec3 amb = mix(vec3(0.34, 0.38, 0.50), vec3(0.62, 0.68, 0.80), sky);
+              vec3 c = vColor * (amb + 0.45 * d + 0.20 * fill) + vec3(0.12) * top * d;
+              gl_FragColor = vec4(min(c, vec3(1.0)), 1.0);
+          }
+          """'''
+          s = s[:a] + fs + s[b:]
+          s = s.replace('floatArrayOf(0.93f, 0.94f, 0.96f)', 'floatArrayOf(0.97f, 0.97f, 1.0f)')
+          old = 'floor.discY(2.9f, -0.08f, -0.005f, 48, floatArrayOf(0.13f, 0.17f, 0.40f))'
+          new = old.replace('0.13f, 0.17f, 0.40f', '0.05f, 0.16f, 0.26f') + '\n            floor.discY(1.9f, -0.004f, 0.003f, 48, floatArrayOf(0.04f, 0.30f, 0.48f))'
+          s = s.replace(old, new)
+          open(p, 'w', encoding='utf-8').write(s)
+          PYEOF2
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
