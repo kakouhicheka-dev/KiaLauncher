@@ -843,14 +843,22 @@ jobs:
           ic phone "M22,16.92v3a2,2 0 0,1 -2.18,2 19.79,19.79 0 0,1 -8.63,-3.07 19.5,19.5 0 0,1 -6,-6 19.79,19.79 0 0,1 -3.07,-8.67A2,2 0 0,1 4.11,2h3a2,2 0 0,1 2,1.72 12.84,12.84 0 0,0 0.7,2.81 2,2 0 0,1 -0.45,2.11L8.09,9.91a16,16 0 0,0 6,6l1.27,-1.27a2,2 0 0,1 2.11,-0.45 12.84,12.84 0 0,0 2.81,0.7A2,2 0 0,1 22,16.92z"
           ic radio "M3,8h18v12H3z M7,8L17,3 M9,14m-2.5,0a2.5,2.5 0 1,0 5,0a2.5,2.5 0 1,0 -5,0 M15,13h3 M15,16h3"
           ic apps "M4,4h6v6H4z M14,4h6v6h-6z M4,14h6v6H4z M14,14h6v6h-6z"
-          L=app/src/main/res/layout/activity_main.xml
-          sed -i 's/android:textSize="30sp" android:textColor="#FFFFFF"/android:textSize="30sp"/' $L
-          sed -i 's/android:textSize="30sp"/android:textSize="10sp" android:textColor="#FFFFFF"/' $L
-          sed -i 's|android:text="🧭"|android:text="Navigation" android:drawableTop="@drawable/ic_nav" android:drawablePadding="4dp"|' $L
-          sed -i 's|android:text="🎵"|android:text="Musique" android:drawableTop="@drawable/ic_music" android:drawablePadding="4dp"|' $L
-          sed -i 's|android:text="📞"|android:text="Téléphone" android:drawableTop="@drawable/ic_phone" android:drawablePadding="4dp"|' $L
-          sed -i 's|android:text="📻"|android:text="Radio" android:drawableTop="@drawable/ic_radio" android:drawablePadding="4dp"|' $L
-          sed -i 's|android:text="▦"|android:text="Apps" android:drawableTop="@drawable/ic_apps" android:drawablePadding="4dp"|' $L
+          
+              python3 - <<'PYEOF'
+          import re
+          p = 'app/src/main/res/layout/activity_main.xml'
+          s = open(p, encoding='utf-8').read()
+          m = {'🧭': ('Navigation', 'nav'), '🎵': ('Musique', 'music'), '📞': ('Téléphone', 'phone'), '📻': ('Radio', 'radio'), '▦': ('Apps', 'apps')}
+          def fix(t):
+              for e, (label, ic) in m.items():
+                  if 'android:text="' + e + '"' in t:
+                      t = re.sub(r'\s*android:textSize="[^"]*"', '', t)
+                      t = re.sub(r'\s*android:textColor="[^"]*"', '', t)
+                      t = t.replace('android:text="' + e + '"', 'android:text="' + label + '" android:textSize="10sp" android:textColor="#FFFFFF" android:drawableTop="@drawable/ic_' + ic + '" android:drawablePadding="4dp"')
+              return t
+          s = re.sub(r'<TextView[^>]*?/>', lambda x: fix(x.group(0)), s, flags=re.S)
+          open(p, 'w', encoding='utf-8').write(s)
+          PYEOF
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
