@@ -819,6 +819,21 @@ jobs:
           cp CarView.kt app/src/main/java/com/example/kialauncher/CarView.kt 
       - name: Apply design
         run: bash apply_design.sh
+      - name: Apply Kia theme
+        run: |
+          cat > app/src/main/res/drawable/bg_main.xml <<'ENDOFFILE'
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <solid android:color="#05141F" />
+          </shape>
+          ENDOFFILE
+          cat > app/src/main/res/drawable/card.xml <<'ENDOFFILE'
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <solid android:color="#0E2231" />
+              <stroke android:width="1dp" android:color="#2A4658" />
+              <corners android:radius="14dp" />
+          </shape>
+          ENDOFFILE
+          sed -i 's/#C7D2FE/#8FA5B3/g; s/#4ADE80/#05C1FF/g' app/src/main/res/layout/activity_main.xml  
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
