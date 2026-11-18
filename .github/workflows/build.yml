@@ -887,6 +887,200 @@ jobs:
           s = s.replace(old, new)
           open(p, 'w', encoding='utf-8').write(s)
           PYEOF2
+      - name: Apply Reality theme
+        run: |
+          F=$(find . -name MainActivity.kt | head -1)
+          PKG=$(grep -m1 '^package ' "$F" | sed 's/package //' | tr -d '\r ')
+          echo "MainActivity: $F  package: $PKG"
+          cp "$F" "$F.bak"
+          cat > "$F" <<'KOTLIN_EOF'
+          package PKGPLACEHOLDER
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.Gravity
+          import android.view.View
+          import android.widget.FrameLayout
+          import android.widget.LinearLayout
+          import android.widget.TextClock
+          import android.widget.TextView
+          import android.widget.Toast
+
+          class MainActivity : Activity() {
+
+              private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+              private fun glass(radius: Int = 22): GradientDrawable = GradientDrawable().apply {
+                  setColor(0x66101828.toInt())
+                  cornerRadius = dp(radius).toFloat()
+                  setStroke(dp(1), 0x553C7BFF)
+              }
+
+              private fun txt(s: String, size: Float, color: Int = Color.WHITE, bold: Boolean = false) =
+                  TextView(this).apply {
+                      text = s; textSize = size; setTextColor(color)
+                      if (bold) typeface = Typeface.DEFAULT_BOLD
+                  }
+
+              private fun statRow(label: String, value: String): LinearLayout =
+                  LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      setPadding(dp(16), dp(10), dp(16), dp(10))
+                      addView(txt(label, 16f), LinearLayout.LayoutParams(0, -2, 1f))
+                      addView(txt(value, 18f, Color.WHITE, true))
+                  }
+
+              private fun navButton(label: String, action: () -> Unit) =
+                  TextView(this).apply {
+                      text = label; textSize = 16f; setTextColor(Color.WHITE)
+                      gravity = Gravity.CENTER
+                      background = glass(18)
+                      setOnClickListener { action() }
+                  }
+
+              private fun openCarPlay() {
+                  val pkgs = listOf("com.zjinnova.zlink", "com.zjinnova.carplay", "com.syu.carlink")
+                  for (p in pkgs) {
+                      val i = packageManager.getLaunchIntentForPackage(p)
+                      if (i != null) { startActivity(i); return }
+                  }
+                  Toast.makeText(this, "CarPlay: app introuvable", Toast.LENGTH_SHORT).show()
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or
+                      View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                      View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+
+                  val root = FrameLayout(this)
+                  root.background = GradientDrawable(
+                      GradientDrawable.Orientation.TOP_BOTTOM,
+                      intArrayOf(0xFF1A0608.toInt(), 0xFF07070C.toInt(), 0xFF120406.toInt())
+                  )
+
+                  // Plateforme rouge sous la voiture
+                  val platform = View(this).apply {
+                      background = GradientDrawable().apply {
+                          shape = GradientDrawable.OVAL
+                          setColor(0xFF15151C.toInt())
+                          setStroke(dp(5), 0xFFE02020.toInt())
+                      }
+                  }
+                  root.addView(platform, FrameLayout.LayoutParams(dp(640), dp(170), Gravity.CENTER or Gravity.BOTTOM).apply {
+                      bottomMargin = dp(70)
+                  })
+
+                  // Voiture 3D (vue OpenGL existante)
+                  val car = CarView(this)
+                  root.addView(car, FrameLayout.LayoutParams(dp(560), dp(320), Gravity.CENTER).apply {
+                      topMargin = dp(10)
+                  })
+
+                  // Plaque titre
+                  val plate = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER
+                      setPadding(dp(36), dp(12), dp(36), dp(12))
+                      background = GradientDrawable().apply {
+                          setColor(0xCC0B0B12.toInt()); cornerRadius = dp(8).toFloat()
+                          setStroke(dp(2), 0xFFE02020.toInt())
+                      }
+                      addView(txt("Kia Rio", 28f, Color.WHITE, true))
+                      addView(txt("2019", 16f, 0xFF8FB3FF.toInt()))
+                  }
+                  root.addView(plate, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                      topMargin = dp(40)
+                  })
+
+                  // Heure + date (haut gauche)
+                  val clock = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      addView(TextClock(this@MainActivity).apply {
+                          format24Hour = "HH:mm"; format12Hour = "HH:mm"
+                          textSize = 44f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+                      })
+                      addView(TextClock(this@MainActivity).apply {
+                          format24Hour = "EEE d MMMM"; format12Hour = "EEE d MMMM"
+                          textSize = 16f; setTextColor(0xFFAAAAAA.toInt())
+                      })
+                  }
+                  root.addView(clock, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+                      topMargin = dp(20); leftMargin = dp(28)
+                  })
+
+                  // Carte état véhicule (gauche)
+                  val status = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      background = glass()
+                      addView(statRow("Carburant", "-- L"))
+                      addView(statRow("Batterie", "-- V"))
+                      addView(statRow("Extérieur", "--°"))
+                  }
+                  root.addView(status, FrameLayout.LayoutParams(dp(260), -2, Gravity.START or Gravity.CENTER_VERTICAL).apply {
+                      leftMargin = dp(24); topMargin = dp(10)
+                  })
+
+                  // Carte trajet (gauche, bas)
+                  val trip = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      background = glass()
+                      setPadding(dp(16), dp(10), dp(16), dp(10))
+                      listOf("0.0" to "km", "0:00" to "Durée", "0" to "Moy. km/h").forEach { (v, l) ->
+                          addView(LinearLayout(this@MainActivity).apply {
+                              orientation = LinearLayout.VERTICAL
+                              setPadding(0, 0, dp(18), 0)
+                              addView(txt(v, 22f, Color.WHITE, true))
+                              addView(txt(l, 12f, 0xFF8899AA.toInt()))
+                          })
+                      }
+                  }
+                  root.addView(trip, FrameLayout.LayoutParams(-2, -2, Gravity.START or Gravity.BOTTOM).apply {
+                      leftMargin = dp(24); bottomMargin = dp(110)
+                  })
+
+                  // Carte météo (droite)
+                  val weather = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      background = glass()
+                      setPadding(dp(18), dp(14), dp(18), dp(14))
+                      addView(txt("Position", 14f, 0xFFCCCCCC.toInt()))
+                      addView(txt("--°", 40f, Color.WHITE, true))
+                      addView(txt("Météo", 16f, 0xFFCCCCCC.toInt()))
+                  }
+                  root.addView(weather, FrameLayout.LayoutParams(dp(220), -2, Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                      rightMargin = dp(24); topMargin = dp(10)
+                  })
+
+                  // Barre du bas
+                  val bar = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      addView(txt("-- km/h", 24f, Color.WHITE, true).apply {
+                          gravity = Gravity.CENTER; background = glass(18)
+                      }, LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(10) })
+                      listOf<Pair<String, () -> Unit>>(
+                          "CarPlay" to { openCarPlay() },
+                          "Réglages" to { startActivity(Intent(Settings.ACTION_SETTINGS)) },
+                          "Apps" to { startActivity(Intent(this@MainActivity, AppsActivity::class.java)) },
+                          "Véhicule" to { Toast.makeText(this@MainActivity, "Bientôt", Toast.LENGTH_SHORT).show() }
+                      ).forEach { (l, a) ->
+                          addView(navButton(l, a), LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(10) })
+                      }
+                  }
+                  root.addView(bar, FrameLayout.LayoutParams(-1, dp(70), Gravity.BOTTOM).apply {
+                      leftMargin = dp(24); rightMargin = dp(24); bottomMargin = dp(16)
+                  })
+
+                  setContentView(root)
+              }
+          }
+          KOTLIN_EOF
+          sed -i "s/PKGPLACEHOLDER/$PKG/" "$F"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
