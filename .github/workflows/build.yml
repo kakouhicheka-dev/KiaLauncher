@@ -892,8 +892,9 @@ jobs:
           F=$(find . -name MainActivity.kt | head -1)
           PKG=$(grep -m1 '^package ' "$F" | sed 's/package //' | tr -d '\r ')
           echo "MainActivity: $F  package: $PKG"
-          cp "$F" "$F.bak"
-          cat > "$F" <<'KOTLIN_EOF'
+          D=$(dirname "$F")
+          sed -i 's/\bMainActivity\b/OldMainActivity/g' "$F"
+          cat > "$D/HomeActivity.kt" <<'KOTLIN_EOF'
           package PKGPLACEHOLDER
 
           import android.app.Activity
@@ -1080,7 +1081,7 @@ jobs:
               }
           }
           KOTLIN_EOF
-          sed -i "s/PKGPLACEHOLDER/$PKG/" "$F"
+          sed -i "s/PKGPLACEHOLDER/$PKG/" "$D/HomeActivity.kt"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
